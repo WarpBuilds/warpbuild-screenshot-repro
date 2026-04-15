@@ -32,6 +32,7 @@ jobs:
           pgrep -fl TextEdit || echo "TextEdit didn't start"
           screencapture -x /tmp/probe/desktop.png
           ls -la /tmp/probe/desktop.png
+          python3 -m pip install --quiet --break-system-packages Pillow 2>&1 | tail -3
           python3 -c "
           from PIL import Image
           im = Image.open('/tmp/probe/desktop.png')
@@ -77,6 +78,7 @@ jobs:
           open -a TextEdit
           sleep 4
           screencapture -x /tmp/probe/desktop.png
+          python3 -m pip install --quiet --break-system-packages Pillow 2>&1 | tail -3
           python3 -c "
           from PIL import Image
           im = Image.open('/tmp/probe/desktop.png')
