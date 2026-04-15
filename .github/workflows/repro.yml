@@ -170,4 +170,5 @@ jobs:
           ---
           _Auto-posted by the [\`repro.yml\`](https://github.com/${REPO}/blob/main/.github/workflows/repro.yml) workflow._
           MD
+          gh label create probe-run --repo "$REPO" --color BFD4F2 --description "auto-posted by repro" 2>/dev/null || true
           gh issue create --repo "$REPO" --title "Probe run ${RUN_ID}" --body-file "$BODY" --label probe-run 2>&1 | tail -1
