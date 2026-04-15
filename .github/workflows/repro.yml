@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   warpbuild:
-    runs-on: warpdedv-macos-latest-arm64-3x
+    runs-on: warpdev-macos-latest-arm64-3x
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
