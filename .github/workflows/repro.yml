@@ -5,6 +5,10 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: write
+  issues: write
+
 jobs:
   warpbuild:
     runs-on: warp-macos-latest-arm64-6x
@@ -97,3 +101,73 @@ jobs:
         with:
           name: screenshot-control-${{ github.run_id }}
           path: /tmp/probe/
+
+  post-issue:
+    runs-on: ubuntu-latest
+    needs: [warpbuild, github-hosted-control]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download warpbuild screenshot
+        uses: actions/download-artifact@v4
+        with:
+          name: screenshot-${{ github.run_id }}
+          path: artifacts/warpbuild
+        continue-on-error: true
+
+      - name: Download GitHub control screenshot
+        uses: actions/download-artifact@v4
+        with:
+          name: screenshot-control-${{ github.run_id }}
+          path: artifacts/github
+        continue-on-error: true
+
+      - name: Commit screenshots into runs/<run_id>/
+        run: |
+          set -euo pipefail
+          RUN_DIR="runs/${{ github.run_id }}"
+          mkdir -p "$RUN_DIR"
+          cp artifacts/warpbuild/desktop.png "$RUN_DIR/warpbuild.png" 2>/dev/null || true
+          cp artifacts/github/desktop.png "$RUN_DIR/macos-15.png" 2>/dev/null || true
+          ls -la "$RUN_DIR"
+          git config user.email "action@github.com"
+          git config user.name "github-actions"
+          git add "$RUN_DIR"
+          git diff --cached --quiet && { echo "nothing to commit"; exit 0; } || true
+          git commit -m "screenshots: run ${{ github.run_id }}"
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin main && git push origin main && exit 0
+          done
+          exit 1
+
+      - name: Create issue with inline screenshots
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUN_ID=${{ github.run_id }}
+          REPO=${{ github.repository }}
+          BASE="https://github.com/${REPO}/raw/main/runs/${RUN_ID}"
+          BODY=$(mktemp)
+          cat > "$BODY" <<MD
+          # Screenshot probe — run \`${RUN_ID}\`
+
+          - Workflow: <https://github.com/${REPO}/actions/runs/${RUN_ID}>
+          - macOS app launched in both jobs: TextEdit
+          - Capture command: \`open -a TextEdit && sleep 4 && screencapture -x desktop.png\`
+
+          ## WarpBuild \`warp-macos-latest-arm64-6x\` (M4 Pro Virtual)
+
+          ![warpbuild](${BASE}/warpbuild.png)
+
+          ## GitHub-hosted \`macos-15\` (control)
+
+          ![macos-15](${BASE}/macos-15.png)
+
+          ---
+          _Auto-posted by the [\`repro.yml\`](https://github.com/${REPO}/blob/main/.github/workflows/repro.yml) workflow._
+          MD
+          gh issue create --repo "$REPO" --title "Probe run ${RUN_ID}" --body-file "$BODY" --label probe-run 2>&1 | tail -1
