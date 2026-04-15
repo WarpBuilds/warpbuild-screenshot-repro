@@ -14,92 +14,26 @@ jobs:
     runs-on: warp-macos-latest-arm64-6x
     timeout-minutes: 15
     steps:
-      - name: Hardware + GUI session info
-        run: |
-          set +e
-          echo "=== sysctl ==="
-          sysctl -n hw.model hw.ncpu hw.memsize machdep.cpu.brand_string
-          echo "=== sw_vers ==="
-          sw_vers
-          echo "=== gui session ==="
-          launchctl print gui/$(id -u) 2>&1 | head -12
-          echo "=== WindowServer ==="
-          pgrep -l WindowServer
-          echo "=== display ==="
-          /usr/sbin/system_profiler SPDisplaysDataType 2>&1 | head -25
-
-      - name: Launch TextEdit + screenshot
-        run: |
-          mkdir -p /tmp/probe
-          open -a TextEdit
-          sleep 4
-          pgrep -fl TextEdit || echo "TextEdit didn't start"
-          screencapture -x /tmp/probe/desktop.png
-          ls -la /tmp/probe/desktop.png
-          python3 -m pip install --quiet --break-system-packages Pillow 2>&1 | tail -3
-          python3 -c "
-          from PIL import Image
-          im = Image.open('/tmp/probe/desktop.png')
-          pixels = list(im.getdata())
-          mean = sum(sum(p[:3]) for p in pixels) / (len(pixels) * 3)
-          print(f'Mean pixel brightness: {mean:.2f}/255 (0=pure black, 255=white)')
-          print(f'Image size: {im.size}')
-          # compute brightness of just the body region (excludes menu bar)
-          w, h = im.size
-          body = im.crop((0, 30, w, h))
-          bp = list(body.getdata())
-          bmean = sum(sum(p[:3]) for p in bp) / (len(bp) * 3)
-          print(f'Body region (excluding menu bar) mean brightness: {bmean:.2f}/255')
-          "
-
-      - name: Compare to GitHub-hosted (control)
-        run: |
-          echo "On GitHub macos-15 / macos-15-xlarge, the same workflow produces"
-          echo "a screenshot showing TextEdit's full window with toolbar + ruler."
-          echo "On WarpBuild warp-macos-latest-arm64-6x, only the menu bar renders;"
-          echo "the body region (window content + desktop) is solid black."
-
+      - uses: actions/checkout@v4
+      - name: Run probe.sh (shared script)
+        run: bash probe.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: screenshot-${{ github.run_id }}
+          name: screenshot-${{ github.run_id }}-warpbuild
           path: /tmp/probe/
 
   github-hosted-control:
     runs-on: macos-15
     timeout-minutes: 15
     steps:
-      - name: Hardware + GUI session info
-        run: |
-          sysctl -n hw.model hw.ncpu hw.memsize machdep.cpu.brand_string
-          sw_vers
-          launchctl print gui/$(id -u) 2>&1 | head -12
-          pgrep -l WindowServer
-
-      - name: Launch TextEdit + screenshot
-        run: |
-          mkdir -p /tmp/probe
-          open -a TextEdit
-          sleep 4
-          screencapture -x /tmp/probe/desktop.png
-          python3 -m pip install --quiet --break-system-packages Pillow 2>&1 | tail -3
-          python3 -c "
-          from PIL import Image
-          im = Image.open('/tmp/probe/desktop.png')
-          pixels = list(im.getdata())
-          mean = sum(sum(p[:3]) for p in pixels) / (len(pixels) * 3)
-          print(f'Mean pixel brightness: {mean:.2f}/255')
-          w, h = im.size
-          body = im.crop((0, 30, w, h))
-          bp = list(body.getdata())
-          bmean = sum(sum(p[:3]) for p in bp) / (len(bp) * 3)
-          print(f'Body region mean brightness: {bmean:.2f}/255')
-          "
-
+      - uses: actions/checkout@v4
+      - name: Run probe.sh (shared script)
+        run: bash probe.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: screenshot-control-${{ github.run_id }}
+          name: screenshot-${{ github.run_id }}-macos-15
           path: /tmp/probe/
 
   post-issue:
@@ -114,15 +48,15 @@ jobs:
       - name: Download warpbuild screenshot
         uses: actions/download-artifact@v4
         with:
-          name: screenshot-${{ github.run_id }}
+          name: screenshot-${{ github.run_id }}-warpbuild
           path: artifacts/warpbuild
         continue-on-error: true
 
-      - name: Download GitHub control screenshot
+      - name: Download macos-15 control screenshot
         uses: actions/download-artifact@v4
         with:
-          name: screenshot-control-${{ github.run_id }}
-          path: artifacts/github
+          name: screenshot-${{ github.run_id }}-macos-15
+          path: artifacts/macos-15
         continue-on-error: true
 
       - name: Commit screenshots into runs/<run_id>/
@@ -131,12 +65,14 @@ jobs:
           RUN_DIR="runs/${{ github.run_id }}"
           mkdir -p "$RUN_DIR"
           cp artifacts/warpbuild/desktop.png "$RUN_DIR/warpbuild.png" 2>/dev/null || true
-          cp artifacts/github/desktop.png "$RUN_DIR/macos-15.png" 2>/dev/null || true
+          cp artifacts/macos-15/desktop.png "$RUN_DIR/macos-15.png" 2>/dev/null || true
           ls -la "$RUN_DIR"
           git config user.email "action@github.com"
           git config user.name "github-actions"
           git add "$RUN_DIR"
-          git diff --cached --quiet && { echo "nothing to commit"; exit 0; } || true
+          if git diff --cached --quiet; then
+            echo "nothing to commit"; exit 0
+          fi
           git commit -m "screenshots: run ${{ github.run_id }}"
           for i in 1 2 3 4 5; do
             git pull --rebase origin main && git push origin main && exit 0
@@ -156,8 +92,8 @@ jobs:
           # Screenshot probe — run \`${RUN_ID}\`
 
           - Workflow: <https://github.com/${REPO}/actions/runs/${RUN_ID}>
-          - macOS app launched in both jobs: TextEdit
-          - Capture command: \`open -a TextEdit && sleep 4 && screencapture -x desktop.png\`
+          - Both jobs run the **identical** shared script: [\`probe.sh\`](https://github.com/${REPO}/blob/main/probe.sh)
+          - Only difference between jobs: \`runs-on:\` label
 
           ## WarpBuild \`warp-macos-latest-arm64-6x\` (M4 Pro Virtual)
 
@@ -168,7 +104,7 @@ jobs:
           ![macos-15](${BASE}/macos-15.png)
 
           ---
-          _Auto-posted by the [\`repro.yml\`](https://github.com/${REPO}/blob/main/.github/workflows/repro.yml) workflow._
+          _Auto-posted by [\`repro.yml\`](https://github.com/${REPO}/blob/main/.github/workflows/repro.yml)._
           MD
           gh label create probe-run --repo "$REPO" --color BFD4F2 --description "auto-posted by repro" 2>/dev/null || true
           gh issue create --repo "$REPO" --title "Probe run ${RUN_ID}" --body-file "$BODY" --label probe-run 2>&1 | tail -1
