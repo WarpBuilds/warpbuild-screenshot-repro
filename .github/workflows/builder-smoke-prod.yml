@@ -1,0 +1,64 @@
+name: builder-smoke-prod
+
+# Exercises WarpBuild docker builders on prod from a prod runner:
+# single-arch cold + warm build, then multi-arch. Mirrors backend-core's
+# region-pin-smoke, minus the preprod API domain override.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "Prod runner label"
+        required: true
+        default: "warp-ubuntu-latest-x64-2x"
+      profile_name:
+        description: "Docker builder profile (single-arch)"
+        required: true
+      profile_name_multi:
+        description: "Docker builder profile with architecture=multi (empty = skip)"
+        required: false
+        default: ""
+
+jobs:
+  smoke:
+    runs-on: ${{ github.event.inputs.runner }}
+    steps:
+      - name: Dockerfile
+        run: |
+          mkdir -p smoke
+          cat > smoke/Dockerfile <<'EOF'
+          FROM alpine:3.22
+          RUN apk add --no-cache curl && for i in $(seq 1 20); do dd if=/dev/urandom of=/tmp/blob$i bs=1M count=5 2>/dev/null; done
+          RUN echo built-at $(date -u +%FT%TZ) > /built
+          CMD ["cat", "/built"]
+          EOF
+
+      - name: single-arch cold
+        uses: Warpbuilds/build-push-action@v6
+        with:
+          context: smoke
+          push: false
+          load: true
+          tags: builder-smoke:${{ github.run_id }}
+          profile-name: ${{ github.event.inputs.profile_name }}
+
+      - name: run image
+        run: docker run --rm builder-smoke:${{ github.run_id }}
+
+      - name: single-arch warm
+        uses: Warpbuilds/build-push-action@v6
+        with:
+          context: smoke
+          push: false
+          tags: builder-smoke:${{ github.run_id }}-warm
+          profile-name: ${{ github.event.inputs.profile_name }}
+
+      - name: multi-arch
+        if: ${{ github.event.inputs.profile_name_multi != '' }}
+        uses: Warpbuilds/build-push-action@v6
+        with:
+          context: smoke
+          push: false
+          platforms: linux/amd64,linux/arm64
+          tags: builder-smoke-multi:${{ github.run_id }}
+          profile-name: ${{ github.event.inputs.profile_name_multi }}
